@@ -1,0 +1,28 @@
+;; libs/parquet/deps.edn
+;;
+;; A standalone library, not a namespace inside a job. Consumers depend on it
+;; with :local/root today and a Maven coordinate if it is ever published.
+;;
+;; The whole point of the split is the dependency direction: this project
+;; cannot require anything from jobs/, so "reusable by the next DE Argo job"
+;; is enforced by the classpath rather than asserted in a docstring.
+;;
+;; parquet-floor pulls org.apache.parquet/parquet-hadoop, which is a PARQUET
+;; PROJECT MODULE -- the one holding ParquetWriter/ParquetReader and the codec
+;; layer -- and NOT Apache Hadoop. There is no hadoop-common, hadoop-client or
+;; HDFS anywhere in this tree; the whole stack is ~8.8 MB across six jars.
+;; See spikes/clojure-parquet/FINDINGS.md for why parquet-floor was chosen
+;; over tmd-parquet (cannot write DECIMAL at all) and duckdb_jdbc.
+{:paths ["src"]
+ :deps  {org.clojure/clojure                  {:mvn/version "1.12.0"}
+         blue.strategic.parquet/parquet-floor {:mvn/version "2.3"}
+         ;; Required only by parquetry.malli. The core parquetry.core
+         ;; namespace does not load malli, so a consumer that writes its own
+         ;; descriptor vectors never touches it.
+         metosin/malli                        {:mvn/version "0.20.1"}}
+
+ :aliases
+ {:test {:extra-paths ["test"]
+         :extra-deps  {lambdaisland/kaocha      {:mvn/version "1.91.1392"}
+                       org.clojure/test.check   {:mvn/version "1.1.1"}}
+         :main-opts   ["-m" "kaocha.runner"]}}}
