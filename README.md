@@ -47,7 +47,8 @@ a reducible must still be consumed inside the scope owning its connection.
 ## Column types
 
 `:string`, `:long`, `:timestamp` (stored as `TIMESTAMP(MICROS)`), and
-`:decimal` with `:precision` / `:scale` (stored as INT64, so precision ≤ 18).
+`:decimal` with `:precision` / `:scale` (stored as INT32 up to 9 digits and
+INT64 up to 18, as the parquet spec recommends, so precision ≤ 18).
 `:null? true` makes a column optional; columns are required by default, and
 `write!` rejects a row that omits a required one rather than writing a
 structurally valid but unreadable file.

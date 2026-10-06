@@ -66,6 +66,17 @@
     (is (= :d (:column (ex-data e))))))
 
 
+(deftest a-decimal-is-int32-up-to-9-digits-and-int64-beyond
+  (let [path   (tmp)
+        schema [{:name :small :type :decimal :precision 9 :scale 3}
+                {:name :large :type :decimal :precision 10 :scale 2}]]
+    (pq/write! path schema "t" [{:small 123456.789M :large 12345678.90M}])
+
+    (is (re-find #"required int32 small" (pq/file-schema path)))
+    (is (re-find #"required int64 large" (pq/file-schema path)))
+    (is (= [{:small 123456.789M :large 12345678.90M}] (pq/read path)))))
+
+
 (deftest a-decimal-wider-than-int64-is-refused-up-front
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"precision 19"
                         (pq/message-type [{:name :d :type :decimal :precision 19 :scale 2}] "t"))))

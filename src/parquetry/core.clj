@@ -66,10 +66,13 @@
 ;; timestamp (isAdjustedToUTC=false, `LocalDateTime`), as Postgres `timestamp`
 ;; and pyarrow `timestamp("us")` store it.
 ;;
-;; Decimals are stored as INT64, so precision is at most 18.
+;; Decimals are stored as INT32 up to 9 digits and INT64 up to 18, as the parquet
+;; spec recommends (parquet-java warns otherwise), so precision is at most 18.
 
 (def ^:private binary PrimitiveType$PrimitiveTypeName/BINARY)
+(def ^:private int32  PrimitiveType$PrimitiveTypeName/INT32)
 (def ^:private int64  PrimitiveType$PrimitiveTypeName/INT64)
+(def ^:private max-int32-precision 9)
 (def ^:private max-int64-precision 18)
 
 
@@ -93,7 +96,7 @@
       (do (when (> precision max-int64-precision)
             (throw (ex-info (str "decimal column " name " has precision " precision "; INT64 holds at most " max-int64-precision)
                             {:type ::unsupported-column-type :column name :precision precision})))
-          (-> (builder int64 null?)
+          (-> (builder (if (<= precision max-int32-precision) int32 int64) null?)
               ;; NOTE the argument order: decimalType(scale, precision).
               (.as (LogicalTypeAnnotation/decimalType (int scale) (int precision)))
               (.named col)))
@@ -192,11 +195,20 @@
                         e))))))
 
 
+(defn- ->int32
+  ;; An Integer, not a long: parquet-floor's INT32 writer casts to Integer.
+  [v]
+  (Integer/valueOf (Math/toIntExact (long v))))
+
+
 (defn- encoder
   "Column map -> fn coercing a Clojure value to what parquet-floor writes. Pure."
-  [{:keys [name type scale utc?] :or {utc? true}} round-decimals?]
+  [{:keys [name type precision scale utc?] :or {utc? true}} round-decimals?]
   (case type
-    :decimal   (if round-decimals? #(decimal->unscaled % scale) (exact-decimal name scale))
+    :decimal   (let [unscaled (if round-decimals? #(decimal->unscaled % scale) (exact-decimal name scale))]
+                 (if (<= precision max-int32-precision)
+                   (comp ->int32 unscaled)
+                   unscaled))
     :timestamp (if utc? instant->micros local-date-time->micros)
     identity))
 
