@@ -47,9 +47,28 @@ a reducible must still be consumed inside the scope owning its connection.
 ## Column types
 
 `:string`, `:long`, `:timestamp` (stored as `TIMESTAMP(MICROS)`), and
-`:decimal` with `:precision` / `:scale`. `:null? true` makes a column optional;
-columns are required by default, and `write!` rejects a row that omits a
-required one rather than writing a structurally valid but unreadable file.
+`:decimal` with `:precision` / `:scale` (stored as INT64, so precision ≤ 18).
+`:null? true` makes a column optional; columns are required by default, and
+`write!` rejects a row that omits a required one rather than writing a
+structurally valid but unreadable file.
+
+A timestamp column holds `Instant`s (isAdjustedToUTC=true) unless it says
+`:utc? false`, which makes it a naive wall-clock timestamp holding
+`LocalDateTime`s, as Postgres `timestamp` stores it. In malli, `pqm/instant` and
+`pqm/local-date-time`.
+
+Decimals are rounded HALF_EVEN to the column's scale. Pass
+`{:round-decimals? false}` as `write!`'s last argument to throw
+`{:type ::pq/inexact-decimal}` instead.
+
+## Reading other writers' files
+
+`read` decodes from the file's own footer, so it reads files parquetry did not
+write: pyarrow's FIXED_LEN_BYTE_ARRAY decimals and MILLIS or NANOS timestamps
+included. `file-columns` describes a file in the same terms as a `write!`
+schema, physical encoding aside, so a contract check is
+`(= schema (pq/file-columns path))`. `test/fixtures/make_fixtures.py` writes the
+pyarrow file the tests read.
 
 ## Not Hadoop
 

@@ -32,6 +32,19 @@
          (pqm/->column-descriptors [:map [:at pqm/instant]]))))
 
 
+(deftest local-date-time-becomes-a-naive-timestamp-column
+  (is (= [{:type :timestamp :utc? false :name :at}]
+         (pqm/->column-descriptors [:map [:at pqm/local-date-time]]))))
+
+
+(deftest a-generated-local-date-time-round-trips
+  (let [path (str (File/createTempFile "parquetry" ".parquet"))
+        rows (mg/sample [:map [:at pqm/local-date-time]] {:size 20 :seed 7})]
+    (pq/write! path (pqm/->column-descriptors [:map [:at pqm/local-date-time]]) "t" rows)
+
+    (is (= (vec rows) (pq/read path)))))
+
+
 (deftest declaration-order-is-the-column-order
   ;; Physical column order in the file follows this, so it is load-bearing
   ;; rather than cosmetic.

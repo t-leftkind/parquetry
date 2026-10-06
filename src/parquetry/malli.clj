@@ -13,7 +13,10 @@
   (:import (java.math
              BigDecimal
              BigInteger)
-           java.time.Instant))
+           (java.time
+             Instant
+             LocalDateTime
+             ZoneOffset)))
 
 
 ;; ------------------------------------------------------------ data
@@ -33,6 +36,19 @@
                         (Instant/ofEpochSecond (quot micros 1000000)
                                                (* 1000 (rem micros 1000000))))}
    #(instance? Instant %)])
+
+
+(def local-date-time
+  "A naive TIMESTAMP(MICROS) column (isAdjustedToUTC=false): wall-clock time with
+  no zone, as Postgres `timestamp` stores it. Microsecond precision, as `instant`."
+  [:fn {:parquet/type :timestamp
+        :parquet/utc? false
+        :gen/schema   [:int {:min 0 :max 4102444800000000}]  ; micros since the epoch, .. year 2100
+        :gen/fmap     (fn [micros]
+                        (LocalDateTime/ofEpochSecond (quot micros 1000000)
+                                                     (int (* 1000 (rem micros 1000000)))
+                                                     ZoneOffset/UTC))}
+   #(instance? LocalDateTime %)])
 
 
 (defn decimal
@@ -78,8 +94,9 @@
   (let [props (m/properties s)]
     (if-let [t (:parquet/type props)]
       (cond-> {:type t}
-        (= :decimal t) (assoc :precision (:parquet/precision props)
-                              :scale     (:parquet/scale props)))
+        (= :decimal t)                    (assoc :precision (:parquet/precision props)
+                                                 :scale     (:parquet/scale props))
+        (false? (:parquet/utc? props))    (assoc :utc? false))
       (if-let [t (malli-type->parquet-type (m/type s))]
         {:type t}
         (unsupported (str "no parquet column type for malli schema: " (pr-str (m/form s))) s)))))
