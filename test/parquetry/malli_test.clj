@@ -16,6 +16,12 @@
          (pqm/->column-descriptors [:map [:a :string] [:b :int]]))))
 
 
+(deftest boolean-becomes-a-boolean-column
+  (is (= [{:type :boolean :name :a}
+          {:type :boolean :name :b :null? true}]
+         (pqm/->column-descriptors [:map [:a :boolean] [:b [:maybe :boolean]]]))))
+
+
 (deftest maybe-becomes-an-optional-column
   (is (= [{:type :string :name :a :null? true}]
          (pqm/->column-descriptors [:map [:a [:maybe :string]]]))
@@ -55,11 +61,11 @@
 
 (deftest an-unmappable-type-throws-rather-than-guessing
   (try
-    (pqm/->column-descriptors [:map [:a :boolean]])
+    (pqm/->column-descriptors [:map [:a :double]])
     (is false "expected ex-info")
     (catch clojure.lang.ExceptionInfo e
       (is (= :parquetry.malli/unsupported-schema (:type (ex-data e))))
-      (is (re-find #":boolean" (ex-message e))
+      (is (re-find #":double" (ex-message e))
           "the message must name the offending schema, not just fail"))))
 
 

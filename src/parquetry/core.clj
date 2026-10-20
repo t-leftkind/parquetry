@@ -72,6 +72,7 @@
 (def ^:private binary PrimitiveType$PrimitiveTypeName/BINARY)
 (def ^:private int32  PrimitiveType$PrimitiveTypeName/INT32)
 (def ^:private int64  PrimitiveType$PrimitiveTypeName/INT64)
+(def ^:private boolean-type PrimitiveType$PrimitiveTypeName/BOOLEAN)
 (def ^:private max-int32-precision 9)
 (def ^:private max-int64-precision 18)
 
@@ -89,8 +90,9 @@
   [{:keys [name type null? precision scale utc?] :or {utc? true}}]
   (let [col (clojure.core/name name)]
     (case type
-      :string (-> (builder binary null?) (.as (LogicalTypeAnnotation/stringType)) (.named col))
-      :long   (-> (builder int64 null?) (.named col))
+      :string  (-> (builder binary null?) (.as (LogicalTypeAnnotation/stringType)) (.named col))
+      :long    (-> (builder int64 null?) (.named col))
+      :boolean (-> (builder boolean-type null?) (.named col))
 
       :decimal
       (do (when (> precision max-int64-precision)
@@ -264,9 +266,10 @@
                    (not (.isAdjustedToUTC t)) (assoc :utc? false)
                    unit                       (assoc :unit unit)))
 
-               (if (and (nil? ann) (= int64 (.getPrimitiveTypeName f)))
-                 (assoc base :type :long)
-                 (assoc base :type :unknown :parquet (str f))))]
+               (cond
+                 (and (nil? ann) (= int64 (.getPrimitiveTypeName f)))        (assoc base :type :long)
+                 (and (nil? ann) (= boolean-type (.getPrimitiveTypeName f))) (assoc base :type :boolean)
+                 :else                                                       (assoc base :type :unknown :parquet (str f))))]
     (cond-> col
       (= Type$Repetition/OPTIONAL (.getRepetition f)) (assoc :null? true))))
 

@@ -76,8 +76,9 @@
 (def ^:private malli-type->parquet-type
   "malli types needing no :parquet/type property, because the mapping is
   unambiguous. Anything else must declare its parquet type explicitly."
-  {:string :string
-   :int    :long})
+  {:string  :string
+   :int     :long
+   :boolean :boolean})
 
 
 (defn- unsupported

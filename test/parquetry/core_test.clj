@@ -44,6 +44,19 @@
     (is (= (Instant/parse "2026-09-15T12:00:00.123Z") (:utc_ms row)))))
 
 
+;; -------------------------------------------------------------- booleans
+
+(deftest a-boolean-round-trips-required-and-optional
+  (let [path   (tmp)
+        schema [{:name :a :type :boolean}
+                {:name :b :type :boolean :null? true}]
+        rows   [{:a true :b false} {:a false :b nil} {:a true :b true}]]
+    (pq/write! path schema "t" rows)
+
+    (is (= rows (pq/read path)))
+    (is (= schema (pq/file-columns path)))))
+
+
 ;; -------------------------------------------------------------- decimals
 
 (deftest decimals-from-other-writers-decode-whatever-their-physical-type
