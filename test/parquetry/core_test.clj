@@ -122,3 +122,30 @@
   (let [e (try (pq/write! (tmp) [{:name :s :type :string}] "t" [{}]) nil (catch clojure.lang.ExceptionInfo e e))]
     (is (= ::pq/missing-required (:type (ex-data e))))
     (is (= :s (:column (ex-data e))))))
+
+
+;; ------------------------------------------------------------ rows
+
+(deftest rows-reduces-to-what-read-returns
+  (let [path   (tmp)
+        schema [{:name :id :type :long} {:name :note :type :string :null? true}]
+        data   (mapv #(hash-map :id % :note (when (odd? %) (str "n" %))) (range 5))]
+    (pq/write! path schema "t" data)
+
+    (is (= (pq/read path) (into [] (pq/rows path))))
+    (is (= [1 3] (into [] (comp (filter :note) (map :id)) (pq/rows path))))
+    (is (= 10 (transduce (map :id) + (pq/rows path))))))
+
+
+(deftest rows-stops-at-reduced
+  (let [path (tmp)]
+    (pq/write! path [{:name :id :type :long}] "t" (map #(hash-map :id %) (range 100)))
+
+    (is (= {:id 0} (reduce (fn [_ row] (reduced row)) nil (pq/rows path))))
+    (is (= [0 1 2] (into [] (comp (map :id) (take 3)) (pq/rows path))))))
+
+
+(deftest rows-reads-nothing-until-reduced
+  (let [r (pq/rows "test/fixtures/no-such-file.parquet")]
+    (is (some? r))
+    (is (thrown? Exception (into [] r)))))

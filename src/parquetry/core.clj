@@ -30,7 +30,13 @@
              ParquetReader
              ParquetWriter
              ValueWriter)
+           (clojure.lang
+             IReduceInit)
            java.io.File
+           (java.util
+             Iterator)
+           (java.util.stream
+             Stream)
            (java.math
              BigDecimal
              BigInteger
@@ -340,6 +346,49 @@
      @n)))
 
 
+(defn- hydrator
+  "Builds each row as a map with keyword keys, decoding by the file's own `mt`."
+  ^Hydrator [^MessageType mt]
+  (let [decoders (into {} (for [^PrimitiveType fld (.getFields mt)]
+                            [(.getName fld) (decoder fld)]))]
+    (reify Hydrator
+      (start [_] (transient {}))
+
+      (add
+        [_ acc k v]
+        ;; k is a String[] column PATH, not a String.
+        ;; parquet-floor calls add with nil for an absent
+        ;; optional column, so the decoder must be skipped --
+        ;; otherwise a NULL decimal NPEs on decode.
+        (let [col (last (vec k))]
+          (assoc! acc (keyword col)
+                  (when (some? v) ((decoders col) v)))))
+
+      (finish [_ acc] (persistent! acc)))))
+
+
+(defn rows
+  "A reducible over the rows of `path`, each a map as `read` returns, decoded one at a time.
+
+  Every `reduce` (or `into`, `transduce`, `run!`) opens the file and closes it when it
+  ends, early by `reduced` included; nothing is read until then. Use it when the rows
+  would not fit in memory at once."
+  [path]
+  (reify IReduceInit
+    (reduce
+      [_ f init]
+      (let [hydrate (hydrator (file-message-type path))]
+        (with-open [^Stream s (ParquetReader/streamContent (File. (str path)) hydrate)]
+          (let [^Iterator it (.iterator s)]
+            (loop [acc init]
+              (if-not (.hasNext it)
+                acc
+                (let [acc (f acc (.next it))]
+                  (if (reduced? acc)
+                    @acc
+                    (recur acc)))))))))))
+
+
 (defn read
   "Read `path` into a vector of maps with keyword keys.
 
@@ -347,26 +396,7 @@
   `BigDecimal` and timestamps as `Instant` (or `LocalDateTime`, when the file
   says isAdjustedToUTC=false) without the caller supplying anything."
   [path]
-  (let [f        (File. (str path))
-        mt       (file-message-type path)
-        decoders (into {} (for [^PrimitiveType fld (.getFields mt)]
-                            [(.getName fld) (decoder fld)]))]
-    (with-open [s (ParquetReader/streamContent
-                    f (reify Hydrator
-                        (start [_] (transient {}))
-
-                        (add
-                          [_ acc k v]
-                          ;; k is a String[] column PATH, not a String.
-                          ;; parquet-floor calls add with nil for an absent
-                          ;; optional column, so the decoder must be skipped --
-                          ;; otherwise a NULL decimal NPEs on decode.
-                          (let [col (last (vec k))]
-                            (assoc! acc (keyword col)
-                                    (when (some? v) ((decoders col) v)))))
-
-                        (finish [_ acc] (persistent! acc))))]
-      (vec (.toList s)))))
+  (into [] (rows path)))
 
 
 (defn file-schema

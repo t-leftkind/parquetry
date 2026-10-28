@@ -44,6 +44,10 @@ unpublished, so consumers use a git coordinate. See the repo-split design's
 streams straight to disk at constant memory. It does not realise its input —
 a reducible must still be consumed inside the scope owning its connection.
 
+`read` returns every row at once. `(pq/rows path)` is the same rows as a
+reducible, decoded one at a time: `(into [] xf (pq/rows path))` holds only what
+`xf` keeps. Each reduce opens the file and closes it when done.
+
 ## Column types
 
 `:string`, `:long`, `:timestamp` (stored as `TIMESTAMP(MICROS)`), and
