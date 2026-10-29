@@ -26,4 +26,5 @@ jobs:
           path: ~/.m2/repository
           key: ${{ runner.os }}-m2-${{ hashFiles('deps.edn') }}
           restore-keys: ${{ runner.os }}-m2-
+      - run: clojure -M:splint src test
       - run: clojure -M:test

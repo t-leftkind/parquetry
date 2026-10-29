@@ -8,8 +8,14 @@ job.
 
 | Namespace | Depends on | Purpose |
 |---|---|---|
-| `parquetry.core` | parquet-floor only | `write!` / `read` over Clojure maps. Schema is a plain vector of column descriptors. |
+| `parquetry.core` | parquet-floor, Truss | `write!` / `read` over Clojure maps. Schema is a plain vector of column descriptors. |
+| `parquetry.inspect` | `parquetry.core` | Check an artifact's footer against its actual per-column fill. |
 | `parquetry.malli` | malli | Derive those descriptors from a malli `:map`, so a dataset's shape is declared once. Optional. |
+
+`parquetry.core` is built from `schema` (columns ↔ parquet fields), `codec`
+(per-column encoders and decoders), `convert` (decimal and timestamp
+conversions, JDK only) and `floor` (all parquet-floor interop). Callers normally
+need only `core`.
 
 ## Use
 
@@ -40,7 +46,7 @@ unpublished, so consumers use a git coordinate. See the repo-split design's
 (pq/read "sales.parquet")
 ```
 
-`write!` consumes any `Iterable`, so a reducible over a live JDBC result set
+`write!` reduces its rows, so it accepts any reducible, and a reducible over a live JDBC result set
 streams straight to disk at constant memory. It does not realise its input —
 a reducible must still be consumed inside the scope owning its connection.
 
@@ -50,12 +56,14 @@ reducible, decoded one at a time: `(into [] xf (pq/rows path))` holds only what
 
 ## Column types
 
-`:string`, `:long`, `:timestamp` (stored as `TIMESTAMP(MICROS)`), and
+`:string`, `:long`, `:boolean`, `:timestamp` (stored as `TIMESTAMP(MICROS)`), and
 `:decimal` with `:precision` / `:scale` (stored as INT32 up to 9 digits and
 INT64 up to 18, as the parquet spec recommends, so precision ≤ 18).
 `:null? true` makes a column optional; columns are required by default, and
 `write!` rejects a row that omits a required one rather than writing a
-structurally valid but unreadable file.
+structurally valid but unreadable file. A malformed column (no `:name`, a
+decimal without `:precision` or `:scale`) fails a Truss assertion whose `:data`
+holds the column.
 
 A timestamp column holds `Instant`s (isAdjustedToUTC=true) unless it says
 `:utc? false`, which makes it a naive wall-clock timestamp holding
@@ -85,4 +93,5 @@ parquet stack is ~8.8 MB across six jars.
 
 ```bash
 clojure -M:test
+clojure -M:splint src test   # style lint; CI runs both
 ```

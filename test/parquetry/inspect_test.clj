@@ -1,9 +1,11 @@
 (ns parquetry.inspect-test
-  (:require [clojure.datafy :as datafy]
-            [clojure.test :refer [deftest is]]
-            [parquetry.core :as pq]
-            [parquetry.inspect :as inspect])
-  (:import java.io.File))
+  (:require
+    [clojure.datafy :as datafy]
+    [clojure.test :refer [deftest is]]
+    [matcher-combinators.test]
+    [parquetry.core :as pq]
+    [parquetry.inspect :as inspect]
+    [parquetry.test-util :refer [tmp-path]]))
 
 
 (def ^:private descriptors
@@ -14,7 +16,7 @@
 
 (defn- write-tmp!
   [rows]
-  (let [path (str (File/createTempFile "parquetry-inspect" ".parquet"))]
+  (let [path (tmp-path)]
     (pq/write! path descriptors "t" rows)
     path))
 
@@ -52,8 +54,7 @@
 (deftest a-healthy-artifact-reads-ok
   (let [path (write-tmp! [{:id 1 :name "a" :note "x"}])
         r    (inspect/inspect path)]
-    (is (= :ok (:verdict r)))
-    (is (= [] (:all-null-columns r)))))
+    (is (match? {:verdict :ok :all-null-columns []} r))))
 
 
 (deftest the-finding-9-signature-is-caught
@@ -63,9 +64,11 @@
   (let [path (write-tmp! [{:id 1 :name "a" :note nil}
                           {:id 2 :name "b" :note nil}])
         r    (inspect/inspect path)]
-    (is (= 2 (get-in r [:footer :row-count])) "the footer is right, which is the trap")
-    (is (= [:note] (:all-null-columns r)))
-    (is (= :suspect-all-null-columns (:verdict r)))))
+    (is (match? {:footer           {:row-count 2}
+                 :all-null-columns [:note]
+                 :verdict          :suspect-all-null-columns}
+                r)
+        "the footer row count is right, which is the trap")))
 
 
 (deftest an-empty-artifact-is-reported-as-empty-not-suspect

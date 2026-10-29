@@ -1,34 +1,32 @@
 (ns parquetry.core-test
-  (:require [clojure.test :refer [deftest is testing]]
-            [parquetry.core :as pq])
-  (:import java.io.File
-           (java.time Instant
-                      LocalDateTime)))
-
-
-(defn- tmp
-  []
-  (str (File/createTempFile "parquetry" ".parquet")))
+  (:require
+    [clojure.test :refer [are deftest is testing]]
+    [matcher-combinators.test]
+    [parquetry.core :as pq]
+    [parquetry.test-util :refer [tmp-path]])
+  (:import
+    clojure.lang.ExceptionInfo
+    (java.time
+      Instant
+      LocalDateTime)))
 
 
 (def ^:private fixture "test/fixtures/pyarrow.parquet")
 (def ^:private ldt (LocalDateTime/of 2026 9 15 12 0 0 123456000))
 
 
-;; ------------------------------------------------------------ timestamps
-
 (deftest a-timestamp-is-utc-and-an-instant-by-default
-  (let [path   (tmp)
+  (let [path   (tmp-path)
         schema [{:name :at :type :timestamp}]
         at     (Instant/parse "2026-09-15T12:00:00.123456Z")]
     (pq/write! path schema "t" [{:at at}])
 
     (is (= [{:at at}] (pq/read path)))
-    (is (= schema (mapv #(dissoc % :null?) (pq/file-columns path))))))
+    (is (= schema (pq/file-columns path)))))
 
 
 (deftest a-naive-timestamp-round-trips-as-a-local-date-time
-  (let [path   (tmp)
+  (let [path   (tmp-path)
         schema [{:name :at :type :timestamp :utc? false}]]
     (pq/write! path schema "t" [{:at ldt}])
 
@@ -44,10 +42,8 @@
     (is (= (Instant/parse "2026-09-15T12:00:00.123Z") (:utc_ms row)))))
 
 
-;; -------------------------------------------------------------- booleans
-
 (deftest a-boolean-round-trips-required-and-optional
-  (let [path   (tmp)
+  (let [path   (tmp-path)
         schema [{:name :a :type :boolean}
                 {:name :b :type :boolean :null? true}]
         rows   [{:a true :b false} {:a false :b nil} {:a true :b true}]]
@@ -57,30 +53,30 @@
     (is (= schema (pq/file-columns path)))))
 
 
-;; -------------------------------------------------------------- decimals
-
 (deftest decimals-from-other-writers-decode-whatever-their-physical-type
   (is (= [[1.500M 2.50M] [-9999.999M 0.00M] [nil nil]]
          (mapv (juxt :small :large) (pq/read fixture)))))
 
 
 (deftest a-decimal-is-rounded-half-even-by-default
-  (let [path (tmp)]
+  (let [path (tmp-path)]
     (pq/write! path [{:name :d :type :decimal :precision 7 :scale 3}] "t" [{:d 1.2345M}])
 
     (is (= [{:d 1.234M}] (pq/read path)))))
 
 
 (deftest a-strict-write-refuses-a-decimal-that-would-round
-  (let [e (try (pq/write! (tmp) [{:name :d :type :decimal :precision 7 :scale 3}] "t" [{:d 1.2345M}] {:round-decimals? false})
-               nil
-               (catch clojure.lang.ExceptionInfo e e))]
-    (is (= ::pq/inexact-decimal (:type (ex-data e))))
-    (is (= :d (:column (ex-data e))))))
+  (is (thrown-match? ExceptionInfo
+                     {:type ::pq/inexact-decimal :column :d}
+                     (pq/write! (tmp-path)
+                                [{:name :d :type :decimal :precision 7 :scale 3}]
+                                "t"
+                                [{:d 1.2345M}]
+                                {:round-decimals? false}))))
 
 
 (deftest a-decimal-is-int32-up-to-9-digits-and-int64-beyond
-  (let [path   (tmp)
+  (let [path   (tmp-path)
         schema [{:name :small :type :decimal :precision 9 :scale 3}
                 {:name :large :type :decimal :precision 10 :scale 2}]]
     (pq/write! path schema "t" [{:small 123456.789M :large 12345678.90M}])
@@ -92,14 +88,12 @@
 
 (deftest a-decimal-wider-than-int64-is-refused-up-front
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"precision 19"
-                        (pq/message-type [{:name :d :type :decimal :precision 19 :scale 2}] "t"))))
+        (pq/message-type [{:name :d :type :decimal :precision 19 :scale 2}] "t"))))
 
-
-;; --------------------------------------------------------------- schema
 
 (deftest file-columns-describe-a-file-in-write-schema-terms
   (testing "parquetry's own file reads back as the schema it was written with"
-    (let [path   (tmp)
+    (let [path   (tmp-path)
           schema [{:name :s :type :string}
                   {:name :n :type :long :null? true}
                   {:name :d :type :decimal :precision 7 :scale 3}
@@ -119,27 +113,45 @@
 
 
 (deftest a-missing-required-value-is-a-typed-error
-  (let [e (try (pq/write! (tmp) [{:name :s :type :string}] "t" [{}]) nil (catch clojure.lang.ExceptionInfo e e))]
-    (is (= ::pq/missing-required (:type (ex-data e))))
-    (is (= :s (:column (ex-data e))))))
+  (is (thrown-match? ExceptionInfo
+                     {:type ::pq/missing-required :column :s}
+                     (pq/write! (tmp-path) [{:name :s :type :string}] "t" [{}]))))
 
 
-;; ------------------------------------------------------------ rows
+(deftest a-malformed-column-fails-an-assertion-naming-it
+  (testing "rather than a NullPointerException deep in the parquet builder"
+    (are [column] (thrown-match? ExceptionInfo
+                                 {:data {:column column}}
+                                 (pq/message-type [column] "t"))
+      {:type :string}
+      {:name :d :type :decimal}
+      {:name :d :type :decimal :precision 5}
+      {:name :d :type :decimal :precision 5 :scale -1})))
+
+
+(deftest write-accepts-a-reducible-that-is-not-seqable
+  ;; next.jdbc's `plan` is IReduceInit only.
+  (let [path (tmp-path)
+        rows (reify clojure.lang.IReduceInit
+               (reduce [_ f init] (reduce f init [{:id 1} {:id 2}])))]
+    (is (= 2 (pq/write! path [{:name :id :type :long}] "t" rows)))
+    (is (= [{:id 1} {:id 2}] (pq/read path)))))
+
 
 (deftest rows-reduces-to-what-read-returns
-  (let [path   (tmp)
+  (let [path   (tmp-path)
         schema [{:name :id :type :long} {:name :note :type :string :null? true}]
         data   (mapv #(hash-map :id % :note (when (odd? %) (str "n" %))) (range 5))]
     (pq/write! path schema "t" data)
 
-    (is (= (pq/read path) (into [] (pq/rows path))))
+    (is (= (pq/read path) (vec (pq/rows path))))
     (is (= [1 3] (into [] (comp (filter :note) (map :id)) (pq/rows path))))
     (is (= 10 (transduce (map :id) + (pq/rows path))))))
 
 
 (deftest rows-stops-at-reduced
-  (let [path (tmp)]
-    (pq/write! path [{:name :id :type :long}] "t" (map #(hash-map :id %) (range 100)))
+  (let [path (tmp-path)]
+    (pq/write! path [{:name :id :type :long}] "t" (for [i (range 100)] {:id i}))
 
     (is (= {:id 0} (reduce (fn [_ row] (reduced row)) nil (pq/rows path))))
     (is (= [0 1 2] (into [] (comp (map :id) (take 3)) (pq/rows path))))))
@@ -148,4 +160,4 @@
 (deftest rows-reads-nothing-until-reduced
   (let [r (pq/rows "test/fixtures/no-such-file.parquet")]
     (is (some? r))
-    (is (thrown? Exception (into [] r)))))
+    (is (thrown? Exception (vec r)))))

@@ -1,14 +1,16 @@
 (ns parquetry.malli-test
-  (:require [clojure.test :refer [deftest is testing]]
-            [malli.generator :as mg]
-            [parquetry.core :as pq]
-            [parquetry.malli :as pqm])
-  (:import java.io.File
-           java.math.BigDecimal
-           java.time.Instant))
+  (:require
+    [clojure.test :refer [deftest is testing]]
+    [malli.generator :as mg]
+    [matcher-combinators.test]
+    [parquetry.core :as pq]
+    [parquetry.malli :as pqm]
+    [parquetry.test-util :refer [tmp-path]])
+  (:import
+    clojure.lang.ExceptionInfo
+    java.math.BigDecimal
+    java.time.Instant))
 
-
-;; ------------------------------------------------ ->column-descriptors
 
 (deftest maps-each-supported-malli-type-to-a-parquet-column
   (is (= [{:type :string :name :a}
@@ -44,7 +46,7 @@
 
 
 (deftest a-generated-local-date-time-round-trips
-  (let [path (str (File/createTempFile "parquetry" ".parquet"))
+  (let [path (tmp-path)
         rows (mg/sample [:map [:at pqm/local-date-time]] {:size 20 :seed 7})]
     (pq/write! path (pqm/->column-descriptors [:map [:at pqm/local-date-time]]) "t" rows)
 
@@ -60,24 +62,19 @@
 
 
 (deftest an-unmappable-type-throws-rather-than-guessing
-  (try
-    (pqm/->column-descriptors [:map [:a :double]])
-    (is false "expected ex-info")
-    (catch clojure.lang.ExceptionInfo e
-      (is (= :parquetry.malli/unsupported-schema (:type (ex-data e))))
-      (is (re-find #":double" (ex-message e))
-          "the message must name the offending schema, not just fail"))))
+  (is (thrown-match? ExceptionInfo
+                     {:type ::pqm/unsupported-schema}
+                     (pqm/->column-descriptors [:map [:a :double]])))
+  (is (thrown-with-msg? ExceptionInfo #":double"
+        (pqm/->column-descriptors [:map [:a :double]]))
+      "the message must name the offending schema, not just fail"))
 
 
 (deftest a-non-map-schema-is-rejected
-  (try
-    (pqm/->column-descriptors [:vector :string])
-    (is false "expected ex-info")
-    (catch clojure.lang.ExceptionInfo e
-      (is (= :parquetry.malli/unsupported-schema (:type (ex-data e)))))))
+  (is (thrown-match? ExceptionInfo
+                     {:type ::pqm/unsupported-schema}
+                     (pqm/->column-descriptors [:vector :string]))))
 
-
-;; ---------------------------------------------- generative round trip
 
 (def ^:private Sale
   [:map {:closed true}
@@ -87,11 +84,6 @@
    [:at     pqm/instant]
    [:amount (pqm/decimal 18 6)]
    [:fee    [:maybe (pqm/decimal 18 6)]]])
-
-
-(defn- tmp-path
-  []
-  (str (File/createTempFile "parquetry-gen" ".parquet")))
 
 
 (deftest generated-rows-survive-a-parquet-round-trip

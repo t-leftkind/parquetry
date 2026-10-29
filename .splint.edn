@@ -1,0 +1,3 @@
+{lint/prefer-method-values {:enabled false}
+ lint/thread-macro-one-arg {:enabled true}
+ metrics/parameter-count {:enabled true}}

@@ -1,29 +1,22 @@
 (ns parquetry.inspect
   "Inspect a parquet artifact without trusting it.
 
-  From a real incident: a key-shape mismatch produced a 6 KB file whose
-  footer correctly claimed 174,128 rows while every column held nil. The
-  write reported success; it failed a step later, on read, blaming the
-  reader. The footer alone could not have caught it -- the footer was right.
-
-  So `inspect` reports the footer count AND the actual per-column fill.
-  Either number alone is reassuring and wrong.
+  A key-shape mismatch once produced a 6 KB file whose footer correctly claimed
+  174,128 rows while every column held nil. The footer was right, so it alone
+  could not catch it: `inspect` reports the footer count AND the per-column fill.
 
   Attaches `nav` rather than importing a viewer, so Portal, REBL, Morse and
   plain `tap>` all work and the choice stays with the caller."
-  (:require [clojure.core.protocols :as p]
-            [parquetry.core :as pq])
-  (:import blue.strategic.parquet.ParquetReader
-           java.io.File
-           (org.apache.parquet.hadoop.metadata
-             BlockMetaData
-             ParquetMetadata)
-           (org.apache.parquet.schema
-             MessageType
-             Type)))
+  (:require
+    [clojure.core.protocols :as p]
+    [parquetry.core :as pq]
+    [parquetry.floor :as floor])
+  (:import
+    (org.apache.parquet.hadoop.metadata
+      BlockMetaData)
+    (org.apache.parquet.schema
+      Type)))
 
-
-;; ------------------------------------------------------------ actions
 
 (defn footer
   "Row count, row-group count and column names from the file FOOTER. ACTION.
@@ -31,15 +24,14 @@
   Reads no row data, so it is safe on an artifact too large to hold. On its
   own it is not evidence the file contains anything -- see the ns docstring."
   [path]
-  (let [^ParquetMetadata md (ParquetReader/readMetadata (File. (str path)))
-        ^MessageType mt     (.getSchema (.getFileMetaData md))]
+  (let [md     (floor/metadata path)
+        blocks (.getBlocks md)]
     {:path       (str path)
-     :row-count  (reduce + 0 (map (fn [^BlockMetaData b] (.getRowCount b)) (.getBlocks md)))
-     :row-groups (count (.getBlocks md))
-     :columns    (mapv (fn [^Type f] (keyword (.getName f))) (.getFields mt))}))
+     :row-count  (transduce (map (fn [^BlockMetaData b] (.getRowCount b))) + 0 blocks)
+     :row-groups (count blocks)
+     :columns    (mapv (fn [^Type f] (keyword (.getName f)))
+                       (.getFields (.getSchema (.getFileMetaData md))))}))
 
-
-;; ------------------------------------------------------- calculations
 
 (defn summary
   "Per-column non-nil and nil counts. CALCULATION.
@@ -57,19 +49,28 @@
 
 
 (defn all-null-columns
-  "Columns whose every value is nil. CALCULATION.
+  "Columns whose every value is nil, sorted. CALCULATION.
 
   Non-empty alongside a positive footer count is the incident signature
-  described above."
+  described in the ns docstring."
   [summary]
   (->> summary
        (filter (fn [[_ {:keys [non-nil]}]] (zero? non-nil)))
-       (mapv key)
-       (sort)
-       (vec)))
+       (map key)
+       sort
+       vec))
 
 
-;; ------------------------------------------------------------ actions
+(defn verdict
+  "One keyword judging an artifact from its footer row count, its all-null
+  columns and the number of rows actually read. CALCULATION."
+  [footer-row-count nulls read-row-count]
+  (cond
+    (zero? footer-row-count)                 :empty
+    (seq nulls)                              :suspect-all-null-columns
+    (not= footer-row-count read-row-count)   :footer-disagrees-with-rows
+    :else                                    :ok))
+
 
 (defn inspect
   "Footer + per-column fill + a sample, as a datafiable map. ACTION.
@@ -77,19 +78,15 @@
   Reads the whole file; prefer `footer` on a large one. `:rows` is a
   placeholder -- `nav` into it to realise them."
   [path]
-  (let [ftr  (footer path)
-        rows (pq/read path)
-        summ (summary (:columns ftr) rows)
+  (let [ftr   (footer path)
+        rows  (pq/read path)
+        summ  (summary (:columns ftr) rows)
         nulls (all-null-columns summ)]
     (with-meta
       {:footer           ftr
        :summary          summ
        :all-null-columns nulls
-       :verdict          (cond
-                           (zero? (:row-count ftr))          :empty
-                           (seq nulls)                       :suspect-all-null-columns
-                           (not= (:row-count ftr) (count rows)) :footer-disagrees-with-rows
-                           :else                             :ok)
+       :verdict          (verdict (:row-count ftr) nulls (count rows))
        :sample           (vec (take 5 rows))
        :rows             (str (count rows) " rows -- nav here to expand")}
       {`p/nav (fn [_ k v] (if (= k :rows) rows v))})))
@@ -98,4 +95,4 @@
 (defn tap!
   "`inspect` the artifact and `tap>` it. ACTION. Returns the map too."
   [path]
-  (doto (inspect path) (tap>)))
+  (doto (inspect path) tap>))

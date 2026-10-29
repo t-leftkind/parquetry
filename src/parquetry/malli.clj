@@ -6,24 +6,24 @@
   stated twice -- once in whatever contract the project keeps, once as a
   hand-written descriptor vector -- linked only by a docstring.
 
-  `parquetry.core` does not depend on this namespace and this one does not
-  depend on it: a consumer writing its own descriptors pays nothing for the
-  bridge existing."
-  (:require [malli.core :as m])
-  (:import (java.math
-             BigDecimal
-             BigInteger)
-           (java.time
-             Instant
-             LocalDateTime
-             ZoneOffset)))
+  `parquetry.core` does not depend on this namespace, and this one depends
+  only on `parquetry.convert`: a consumer writing its own descriptors pays
+  nothing for the bridge existing.
 
+  Parquet column types are carried in malli properties under :parquet/* rather
+  than inferred from predicates: a predicate says what a value IS, not what
+  precision to store it at."
+  (:require
+    [malli.core :as m]
+    [parquetry.convert :as convert])
+  (:import
+    (java.math
+      BigDecimal
+      BigInteger)
+    (java.time
+      Instant
+      LocalDateTime)))
 
-;; ------------------------------------------------------------ data
-;;
-;; Column types parquet can store are carried in malli PROPERTIES under the
-;; :parquet/* namespace rather than inferred from predicates. A predicate
-;; says what a value IS; it cannot say what precision to store it at.
 
 (def instant
   "A TIMESTAMP(MICROS) column.
@@ -32,9 +32,7 @@
   fail a round-trip test on the encoding rather than on anything useful."
   [:fn {:parquet/type :timestamp
         :gen/schema   [:int {:min 0 :max 4102444800000000}]  ; epoch micros, .. year 2100
-        :gen/fmap     (fn [micros]
-                        (Instant/ofEpochSecond (quot micros 1000000)
-                                               (* 1000 (rem micros 1000000))))}
+        :gen/fmap     convert/micros->instant}
    #(instance? Instant %)])
 
 
@@ -44,10 +42,7 @@
   [:fn {:parquet/type :timestamp
         :parquet/utc? false
         :gen/schema   [:int {:min 0 :max 4102444800000000}]  ; micros since the epoch, .. year 2100
-        :gen/fmap     (fn [micros]
-                        (LocalDateTime/ofEpochSecond (quot micros 1000000)
-                                                     (int (* 1000 (rem micros 1000000)))
-                                                     ZoneOffset/UTC))}
+        :gen/fmap     convert/micros->local-date-time}
    #(instance? LocalDateTime %)])
 
 
@@ -66,12 +61,9 @@
           :parquet/precision precision
           :parquet/scale     scale
           :gen/schema        [:int {:min (- bound) :max bound}]
-          :gen/fmap          (fn [unscaled]
-                               (BigDecimal. (BigInteger/valueOf unscaled) (int scale)))}
+          :gen/fmap          #(convert/unscaled->decimal % scale)}
      #(instance? BigDecimal %)]))
 
-
-;; ------------------------------------------------------- calculations
 
 (def ^:private malli-type->parquet-type
   "malli types needing no :parquet/type property, because the mapping is
